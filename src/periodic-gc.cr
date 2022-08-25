@@ -3,53 +3,60 @@ class PeriodicGC
 
   DEFAULT_POLL_INTERVAL = 1.second
 
-  @@_instance : PeriodicGC?
+  @@mu : Mutex = Mutex.new
+  @@running : Channel(Nil)? = nil
+  @@poll_interval : Time::Span = DEFAULT_POLL_INTERVAL
 
-  def self.start(poll_interval : Time::Span = DEFAULT_POLL_INTERVAL) : Nil
-    return unless @@_instance.nil?
-
-    @@_instance = PeriodicGC.new(
-      poll_interval: poll_interval
-    )
-  end
-
-  def self.stop : Nil
-    @@_instance.try &.stop
-    @@_instance = nil
-  end
-
-  @mu : Mutex
-  @stop_requested : Bool
-  @poll_interval : Time::Span
-
-  protected def initialize(@poll_interval : Time::Span)
-    @mu = Mutex.new
-    @stop_requested = false
-
-    spawn_loop
-  end
-
-  protected def stop
-    @mu.synchronize { @stop_requested = true }
-  end
-  
-  private def spawn_loop
-    spawn do
-      gc_stats = GC.stats
-
-      loop do
-        abort_before_run = false
-        @mu.synchronize { abort_before_run = @stop_requested }
-        break if abort_before_run
-
-        collect_if_needed!
-
-        sleep(@poll_interval)
-      end
+  def self.poll_interval=(v : Time::Span)
+    @@mu.synchronize do
+      @@poll_interval = v
     end
   end
 
-  private def collect_if_needed!
+  def self.start : Nil
+    @@mu.synchronize do
+      return if @@running
+
+      @@running = spawn_loop
+    end
+  end
+
+  def self.stop : Nil
+    @@mu.synchronize do
+      stop_channel = @@running
+      if !stop_channel.nil?
+        stop_channel.close
+        @@running = nil
+      end
+    end
+  end
+  
+  protected def self.spawn_loop : Channel(Nil)
+    stop_channel = Channel(Nil).new
+
+    spawn do
+      loop do
+        break if stop_channel.closed?
+
+        loop_callback
+      end
+    end
+
+    stop_channel
+  end
+
+  protected def self.loop_callback : Nil
+    sleep_period : Time::Span? = nil
+
+    @@mu.synchronize do
+      collect_if_needed!
+      sleep_period = @@poll_interval
+    end
+
+    sleep(sleep_period.not_nil!)
+  end
+
+  protected def self.collect_if_needed!
     GC.collect if GC.stats.bytes_since_gc > 0
   end
 end

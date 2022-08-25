@@ -2,13 +2,15 @@ require "./spec_helper"
 
 describe PeriodicGC do
   it "starts, stops, and frees memory" do
+    PeriodicGC.poll_interval = 1.millisecond
+
     # Keep pointers around so they aren't freed.
     my_strings = Array(String).new(16)
 
     my_strings << alloc_string(500000)
     GC.stats.bytes_since_gc.should be >= 500000
 
-    PeriodicGC.start(poll_interval: 1.milliseconds)
+    PeriodicGC.start
     sleep(15.milliseconds)
     GC.stats.bytes_since_gc.should be < 16384
 
@@ -35,7 +37,7 @@ describe PeriodicGC do
     my_strings.clear
     my_strings = nil
     GC.stats.bytes_since_gc.should be > 16384
-    PeriodicGC.start(poll_interval: 1.millisecond)
+    PeriodicGC.start
     sleep(15.milliseconds)
     GC.stats.bytes_since_gc.should be < 16384
     PeriodicGC.stop

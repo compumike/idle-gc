@@ -5,6 +5,19 @@
 # ```
 # PeriodicGC.start
 # ```
+# 
+# If your code does not yield or do any I/O, you may need to add explicit calls to `Fiber.yield` to allow PeriodicGC's background Fiber to have a chance to work.
+#
+# For interactive processes, such as a web server, we recommend:
+#
+# ```
+# PeriodicGC.only_if_idle = true
+# PeriodicGC.start
+# ```
+#
+# Idle detection is based on a measurement of how long it takes to `Fiber.yield`, and can be tuned with `#idle_threshold=`.
+#
+# You may force a collection now with `PeriodicGC.collect`.
 class PeriodicGC
   VERSION = "0.1.0"
 
@@ -15,6 +28,7 @@ class PeriodicGC
   @@running : Channel(Nil)? = nil
   @@poll_interval : Time::Span = DEFAULT_POLL_INTERVAL
   @@idle_threshold : Time::Span = DEFAULT_IDLE_THRESHOLD
+  @@only_if_idle : Bool = false
   @@last_checked_at : Time::Span? = nil
   @@last_collected_at : Time::Span? = nil
   @@last_collected_duration : Time::Span? = nil
@@ -42,10 +56,21 @@ class PeriodicGC
 
   # Set the idle threshold for comparing to `#fiber_yield_time`.
   #
-  # Experimentally, I found ~5us when idle, and ~500us or more when busy.
+  # Experimentally, I found Fiber.yield took about ~5us when idle, and ~500us (or more) when busy, but this will depend on your workload.
   def self.idle_threshold=(v : Time::Span) : Nil
     @@mu.synchronize do
       @@idle_threshold = v
+    end
+  end
+
+  # Set to true if we should only run GC when the process appears to be idle.
+  #
+  # This is recommended for interactive applications, such as web servers.
+  #
+  # The default is false: GC will run whenever the poll interval expires, regardless of whether the system is busy.
+  def self.only_if_idle=(v : Bool) : Nil
+    @@mu.synchronize do
+      @@only_if_idle = v
     end
   end
 
@@ -149,8 +174,15 @@ class PeriodicGC
     sleep_period : Time::Span? = nil
 
     @@mu.synchronize do
-      collect_if_needed!
+      @@last_checked_at = Time.monotonic
       sleep_period = @@poll_interval
+
+      should_collect = true
+      should_collect = false if @@only_if_idle && !process_is_idle?
+
+      if should_collect
+        collect_if_needed!
+      end
     end
 
     sleep(sleep_period.not_nil!)
@@ -158,7 +190,6 @@ class PeriodicGC
 
   protected def self.collect_if_needed!
     start_time = Time.monotonic
-    @@last_checked_at = start_time
     return if GC.stats.bytes_since_gc == 0
 
     GC.collect

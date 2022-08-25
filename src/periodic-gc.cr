@@ -1,4 +1,4 @@
-# PeriodicGC runs garbage collection periodically to keep memory usage low.
+# PeriodicGC runs garbage collection periodically when the process is otherwise idle in order to keep memory usage low.
 #
 # To start, just call:
 #
@@ -6,22 +6,20 @@
 # PeriodicGC.start
 # ```
 #
-# For interactive processes, such as a web server, we recommend:
-#
-# ```
-# PeriodicGC.only_if_idle = true
-# PeriodicGC.start
-# ```
+# That is all that most use cases will need. Tweaks and tuning information are below.
 #
 # If your code does not yield or do any I/O, you may need to add explicit calls to `Fiber.yield` to allow PeriodicGC's background Fiber to have a chance to work.
 #
-# Idle detection is based on a measurement of how long it takes to `Fiber.yield`, and can be tuned with `#idle_threshold=`.
+# Idle detection is based on a measurement of how long it takes to `Fiber.yield`, and can be tuned with `#idle_threshold=`. If interactive performance (latency) is not a concern for your applicaiton, we recommend you disable idle detection with `PeriodicGC.only_if_idle = false`.
 #
-# You may force a collection now with `PeriodicGC.collect`. Or, if you would like to run collection only if idle, call `PeriodicGC.collect_if_idle`.
+# You may manually force a collection now with `PeriodicGC.collect`. Or, if you would like to manually run collection only if idle, call `PeriodicGC.collect_if_idle`.
+#
+# Since idle detection may fail, there is a `#force_gc_period=` which is set to force a collection every 2 minutes by default. You may disable this with `PeriodicGC.force_gc_period = nil`.
 class PeriodicGC
   VERSION = "0.1.0"
 
   DEFAULT_POLL_INTERVAL = 1.second
+  DEFAULT_ONLY_IF_IDLE = true
   DEFAULT_IDLE_THRESHOLD = 100.microseconds
   DEFAULT_FORCE_GC_PERIOD = 2.minutes
 
@@ -30,7 +28,7 @@ class PeriodicGC
   @@poll_interval : Time::Span = DEFAULT_POLL_INTERVAL
   @@idle_threshold : Time::Span = DEFAULT_IDLE_THRESHOLD
   @@force_gc_period : Time::Span? = DEFAULT_FORCE_GC_PERIOD
-  @@only_if_idle : Bool = false
+  @@only_if_idle : Bool = DEFAULT_ONLY_IF_IDLE
   @@last_checked_at : Time::Span? = nil
   @@last_collected_at : Time::Span? = nil
   @@last_collected_duration : Time::Span? = nil
@@ -67,8 +65,10 @@ class PeriodicGC
 
   # Set the force GC period, which forces a GC run when non-idle, even if only_if_idle=true.
   #
+  # Set to nil to disable this behavior.
+  #
   # Defaults to 2 minutes.
-  def self.force_gc_period=(v : Time::Span) : Nil
+  def self.force_gc_period=(v : Time::Span?) : Nil
     @@mu.synchronize do
       @@force_gc_period = v
     end
@@ -196,8 +196,13 @@ class PeriodicGC
   end
 
   protected def self.should_force_collect? : Bool
+    fgp = @@force_gc_period
+    return false if fgp.nil?
+
     lca = @@last_collected_at
     return true if lca.nil?
+
+    (Time.monotonic - lca) > fgp
   end
 
   protected def self.loop_callback : Nil
@@ -207,15 +212,22 @@ class PeriodicGC
       @@last_checked_at = Time.monotonic
       sleep_period = @@poll_interval
 
-      should_collect = true
-      should_collect = false if @@only_if_idle && !process_is_idle?
-
-      if should_collect
-        collect_if_needed!
+      if should_force_collect?
+        collect_now!
+      else
+        if @@only_if_idle
+          collect_if_idle_and_needed!
+        else
+          collect_if_needed!
+        end
       end
     end
 
     sleep(sleep_period.not_nil!)
+  end
+
+  protected def self.collect_if_idle_and_needed!
+    collect_if_needed! if process_is_idle?
   end
 
   protected def self.collect_if_needed!

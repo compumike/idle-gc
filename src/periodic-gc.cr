@@ -1,4 +1,4 @@
-# PeriodicGC runs garbage collection periodically when the process is otherwise idle in order to keep memory usage low.
+# PeriodicGC runs garbage collection periodically in order to keep memory usage low. It attempts to do so when the process is otherwise idle.
 #
 # To start, just call:
 #
@@ -8,13 +8,15 @@
 #
 # That is all that most use cases will need. Tweaks and tuning information are below.
 #
-# If your code does not yield or do any I/O, you may need to add explicit calls to `Fiber.yield` to allow PeriodicGC's background Fiber to have a chance to work.
+# In the extremely rare case that your code does not yield or do any I/O, you may need to add explicit calls to `Fiber.yield` to allow PeriodicGC's background Fiber to have a chance to work.
 #
-# Idle detection is based on a measurement of how long it takes to `Fiber.yield`, and can be tuned with `#idle_threshold=`. If interactive performance (latency) is not a concern for your applicaiton, we recommend you disable idle detection with `PeriodicGC.only_if_idle = false`.
+# By default, PeriodicGC polls every 1 second, and if more than 0 bytes have been allocated on the heap, it runs garbage collection. To make PeriodicGC less aggressive (and use less CPU time, at the cost of higher memory usage), you may raise both of these settings, for example: `PeriodicGC.poll_interval = 5.seconds` and `PeriodicGC.bytes_since_gc_threshold = 128*1024`.
+#
+# Idle detection is based on a measurement of how long it takes `Fiber.yield` to return, and can be tuned with `#idle_threshold=`. If interactive performance (latency) is not a concern for your application, it is recommended that you disable idle detection with `PeriodicGC.only_if_idle = false`.
+#
+# Since idle detection may be inaccurate, there is a `#force_gc_period=` which is set to force a collection every 2 minutes by default. You may disable this with `PeriodicGC.force_gc_period = nil`.
 #
 # You may manually force a collection now with `PeriodicGC.collect`. Or, if you would like to manually run collection only if idle, call `PeriodicGC.collect_if_idle`.
-#
-# Since idle detection may fail, there is a `#force_gc_period=` which is set to force a collection every 2 minutes by default. You may disable this with `PeriodicGC.force_gc_period = nil`.
 class PeriodicGC
   VERSION = "0.1.0"
 
@@ -22,6 +24,7 @@ class PeriodicGC
   DEFAULT_ONLY_IF_IDLE = true
   DEFAULT_IDLE_THRESHOLD = 100.microseconds
   DEFAULT_FORCE_GC_PERIOD = 2.minutes
+  DEFAULT_BYTES_SINCE_GC_THRESHOLD = 0u64
 
   @@mu : Mutex = Mutex.new(Mutex::Protection::Reentrant)
   @@running : Channel(Nil)? = nil
@@ -29,6 +32,7 @@ class PeriodicGC
   @@idle_threshold : Time::Span = DEFAULT_IDLE_THRESHOLD
   @@force_gc_period : Time::Span? = DEFAULT_FORCE_GC_PERIOD
   @@only_if_idle : Bool = DEFAULT_ONLY_IF_IDLE
+  @@bytes_since_gc_threshold : UInt64 = DEFAULT_BYTES_SINCE_GC_THRESHOLD
   @@last_checked_at : Time::Span? = nil
   @@last_collected_at : Time::Span? = nil
   @@last_collected_duration : Time::Span? = nil
@@ -82,6 +86,15 @@ class PeriodicGC
   def self.only_if_idle=(v : Bool) : Nil
     @@mu.synchronize do
       @@only_if_idle = v
+    end
+  end
+
+  # Set to the minimum number of allocated memory bytes required to trigger a collection.
+  #
+  # Default is 0, meaning that any allocated memory will trigger a collection.
+  def self.bytes_since_gc_threshold=(v : UInt64) : Nil
+    @@mu.synchronize do
+      @@bytes_since_gc_threshold = v
     end
   end
 
@@ -231,7 +244,7 @@ class PeriodicGC
   end
 
   protected def self.collect_if_needed!
-    return if GC.stats.bytes_since_gc == 0
+    return if GC.stats.bytes_since_gc <= @@bytes_since_gc_threshold
 
     collect_now!
   end

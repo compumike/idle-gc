@@ -5,8 +5,6 @@
 # ```
 # PeriodicGC.start
 # ```
-# 
-# If your code does not yield or do any I/O, you may need to add explicit calls to `Fiber.yield` to allow PeriodicGC's background Fiber to have a chance to work.
 #
 # For interactive processes, such as a web server, we recommend:
 #
@@ -15,19 +13,23 @@
 # PeriodicGC.start
 # ```
 #
+# If your code does not yield or do any I/O, you may need to add explicit calls to `Fiber.yield` to allow PeriodicGC's background Fiber to have a chance to work.
+#
 # Idle detection is based on a measurement of how long it takes to `Fiber.yield`, and can be tuned with `#idle_threshold=`.
 #
-# You may force a collection now with `PeriodicGC.collect`.
+# You may force a collection now with `PeriodicGC.collect`. Or, if you would like to run collection only if idle, call `PeriodicGC.collect_if_idle`.
 class PeriodicGC
   VERSION = "0.1.0"
 
   DEFAULT_POLL_INTERVAL = 1.second
   DEFAULT_IDLE_THRESHOLD = 100.microseconds
+  DEFAULT_FORCE_GC_PERIOD = 2.minutes
 
   @@mu : Mutex = Mutex.new(Mutex::Protection::Reentrant)
   @@running : Channel(Nil)? = nil
   @@poll_interval : Time::Span = DEFAULT_POLL_INTERVAL
   @@idle_threshold : Time::Span = DEFAULT_IDLE_THRESHOLD
+  @@force_gc_period : Time::Span? = DEFAULT_FORCE_GC_PERIOD
   @@only_if_idle : Bool = false
   @@last_checked_at : Time::Span? = nil
   @@last_collected_at : Time::Span? = nil
@@ -63,6 +65,15 @@ class PeriodicGC
     end
   end
 
+  # Set the force GC period, which forces a GC run when non-idle, even if only_if_idle=true.
+  #
+  # Defaults to 2 minutes.
+  def self.force_gc_period=(v : Time::Span) : Nil
+    @@mu.synchronize do
+      @@force_gc_period = v
+    end
+  end
+
   # Set to true if we should only run GC when the process appears to be idle.
   #
   # This is recommended for interactive applications, such as web servers.
@@ -75,9 +86,13 @@ class PeriodicGC
   end
 
   # Start a background Fiber that runs garbage collection periodically.
+  #
+  # (Also runs garbage collection immediately.)
   def self.start : Nil
     @@mu.synchronize do
       return if @@running
+
+      collect_now!
 
       @@running = spawn_loop
     end
@@ -85,7 +100,7 @@ class PeriodicGC
 
   # Stop periodic garbage collection.
   #
-  # (You don't need to call this. Just let it die when your program exits.)
+  # (You don't need to call this. Just let PeriodicGC die naturally when your program exits.)
   def self.stop : Nil
     @@mu.synchronize do
       stop_channel = @@running
@@ -136,6 +151,16 @@ class PeriodicGC
     end
   end
 
+  # Collect now, but only if process is idle.
+  def self.collect_if_idle : Bool
+    if process_is_idle?
+      collect
+      true
+    else
+      false
+    end
+  end
+
   # How long does it take for Fiber.yield to return?
   #
   # This is a measure of whether there are other Fibers waiting to do work.
@@ -155,7 +180,7 @@ class PeriodicGC
   end
 
   ### INTERNAL METHODS
-  
+
   protected def self.spawn_loop : Channel(Nil)
     stop_channel = Channel(Nil).new
 
@@ -168,6 +193,11 @@ class PeriodicGC
     end
 
     stop_channel
+  end
+
+  protected def self.should_force_collect? : Bool
+    lca = @@last_collected_at
+    return true if lca.nil?
   end
 
   protected def self.loop_callback : Nil
@@ -189,12 +219,17 @@ class PeriodicGC
   end
 
   protected def self.collect_if_needed!
-    start_time = Time.monotonic
     return if GC.stats.bytes_since_gc == 0
 
+    collect_now!
+  end
+
+  protected def self.collect_now!
+    start_time = Time.monotonic
     GC.collect
     end_time = Time.monotonic
 
+    @@last_checked_at = start_time
     @@last_collected_at = start_time
     @@last_collected_duration = end_time - start_time
   end

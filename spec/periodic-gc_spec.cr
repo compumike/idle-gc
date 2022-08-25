@@ -15,10 +15,11 @@ describe PeriodicGC do
     my_strings << alloc_string(500000)
     GC.stats.bytes_since_gc.should be >= 500000
 
+    # Calling start should run a collection synchronously
     PeriodicGC.start
-    PeriodicGC.last_checked_at.should be_nil
-    PeriodicGC.last_collected_at.should be_nil
-    PeriodicGC.last_collected_duration.should be_nil
+    PeriodicGC.last_checked_at.not_nil!.should be_close(Time.monotonic, 5.milliseconds)
+    PeriodicGC.last_collected_at.not_nil!.should be_close(Time.monotonic, 50.milliseconds)
+    PeriodicGC.last_collected_duration.not_nil!.should be < 10.milliseconds
     sleep(15.milliseconds)
 
     PeriodicGC.last_checked_at.not_nil!.should be_close(Time.monotonic, 5.milliseconds)
@@ -109,5 +110,33 @@ describe PeriodicGC do
     GC.stats.bytes_since_gc.should be < 16384
     PeriodicGC.last_checked_at.not_nil!.should be_close(Time.monotonic, 5.milliseconds)
     PeriodicGC.last_collected_at.not_nil!.should be_close(Time.monotonic, 25.milliseconds)
+  end
+
+  it "#collect_if_idle works" do
+    # Keep pointers around so they aren't freed.
+    my_strings = Array(String).new(16)
+
+
+    # Idle collection should work
+    my_strings << alloc_string(500000)
+    GC.stats.bytes_since_gc.should be >= 500000
+    PeriodicGC.collect_if_idle.should be_true
+    GC.stats.bytes_since_gc.should be < 16384
+
+    # Start a background worker.
+    worker_stop_channel = spawn_background_worker(1.millisecond)
+    sleep(10.milliseconds)
+
+    # Idle collection shouldn't happen
+    my_strings << alloc_string(256000)
+    GC.stats.bytes_since_gc.should be > 16384
+    PeriodicGC.collect_if_idle.should be_false
+    GC.stats.bytes_since_gc.should be > 16384
+
+    # Stop the background worker
+    worker_stop_channel.close
+    sleep(15.milliseconds)
+    PeriodicGC.collect_if_idle.should be_true
+    GC.stats.bytes_since_gc.should be < 16384
   end
 end

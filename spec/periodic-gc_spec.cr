@@ -1,3 +1,5 @@
+require "digest/md5"
+
 require "./spec_helper"
 
 describe PeriodicGC do
@@ -54,5 +56,31 @@ describe PeriodicGC do
     sleep(15.milliseconds)
     GC.stats.bytes_since_gc.should be < 16384
     PeriodicGC.stop
+  end
+
+  it "#process_is_idle? is accurate" do
+
+    PeriodicGC.process_is_idle?.should be_true
+
+    # Start a worker
+    stop_channel = Channel(Nil).new
+    spawn do
+      loop do
+        break if stop_channel.closed?
+        st = Time.monotonic
+        s = "Hello, world!"
+        loop do
+          break if Time.monotonic - st > 1.millisecond
+          s = Digest::MD5.hexdigest(s)
+        end
+        Fiber.yield
+      end
+    end
+    PeriodicGC.process_is_idle?.should be_false
+
+    # Stop the worker
+    stop_channel.close
+    sleep(10.milliseconds)
+    PeriodicGC.process_is_idle?.should be_true
   end
 end

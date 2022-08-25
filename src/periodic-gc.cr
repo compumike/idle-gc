@@ -9,10 +9,12 @@ class PeriodicGC
   VERSION = "0.1.0"
 
   DEFAULT_POLL_INTERVAL = 1.second
+  DEFAULT_IDLE_THRESHOLD = 100.microseconds
 
-  @@mu : Mutex = Mutex.new
+  @@mu : Mutex = Mutex.new(Mutex::Protection::Reentrant)
   @@running : Channel(Nil)? = nil
   @@poll_interval : Time::Span = DEFAULT_POLL_INTERVAL
+  @@idle_threshold : Time::Span = DEFAULT_IDLE_THRESHOLD
   @@last_checked_at : Time::Span? = nil
   @@last_collected_at : Time::Span? = nil
   @@last_collected_duration : Time::Span? = nil
@@ -35,6 +37,15 @@ class PeriodicGC
         stop_channel.close
         @@running = spawn_loop
       end
+    end
+  end
+
+  # Set the idle threshold for comparing to `#fiber_yield_time`.
+  #
+  # Experimentally, I found ~5us when idle, and ~500us or more when busy.
+  def self.idle_threshold=(v : Time::Span) : Nil
+    @@mu.synchronize do
+      @@idle_threshold = v
     end
   end
 
@@ -97,6 +108,24 @@ class PeriodicGC
       @@last_checked_at = start_time
       @@last_collected_at = start_time
       @@last_collected_duration = end_time - start_time
+    end
+  end
+
+  # How long does it take for Fiber.yield to return?
+  #
+  # This is a measure of whether there are other Fibers waiting to do work.
+  def self.fiber_yield_time : Time::Span
+    start_time = Time.monotonic
+    Fiber.yield
+    end_time = Time.monotonic
+
+    end_time - start_time
+  end
+
+  # Return true if the process is idle, as determined by `#fiber_yield_time` compared to `#idle_threshold=`.
+  def self.process_is_idle? : Bool
+    @@mu.synchronize do
+      return fiber_yield_time < @@idle_threshold
     end
   end
 

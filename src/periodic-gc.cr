@@ -25,6 +25,7 @@ class PeriodicGC
   DEFAULT_IDLE_THRESHOLD = 100.microseconds
   DEFAULT_FORCE_GC_PERIOD = 2.minutes
   DEFAULT_BYTES_SINCE_GC_THRESHOLD = 0u64
+  IDLE_DETECTION_REPEAT = 1
 
   @@mu : Mutex = Mutex.new(Mutex::Protection::Reentrant)
   @@running : Channel(Nil)? = nil
@@ -187,9 +188,12 @@ class PeriodicGC
 
   # Return true if the process is idle, as determined by `#fiber_yield_time` compared to `#idle_threshold=`.
   def self.process_is_idle? : Bool
-    @@mu.synchronize do
-      return fiber_yield_time < @@idle_threshold
-    end
+    cutoff : Time::Span? = nil
+    @@mu.synchronize { cutoff = @@idle_threshold }
+    cutoff = cutoff.not_nil!
+
+    # Check multiple times to reduce false positive rate
+    IDLE_DETECTION_REPEAT.times.all? { fiber_yield_time < cutoff }
   end
 
   ### INTERNAL METHODS

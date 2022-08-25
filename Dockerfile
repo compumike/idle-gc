@@ -1,5 +1,8 @@
 FROM crystallang/crystal:1.5.0-alpine AS dev
 
+RUN apk --update --no-cache add \
+  bash
+
 WORKDIR /app/
 
 # COPY ./shard.yml ./shard.lock /app/

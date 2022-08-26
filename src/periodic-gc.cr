@@ -1,3 +1,5 @@
+require "./periodic-gc/idle"
+
 # PeriodicGC runs garbage collection periodically in order to keep memory usage low. It attempts to do so when the process is otherwise idle.
 #
 # To start, just call:
@@ -22,7 +24,6 @@ class PeriodicGC
 
   DEFAULT_POLL_INTERVAL = 1.second
   DEFAULT_ONLY_IF_IDLE = true
-  DEFAULT_IDLE_THRESHOLD = 100.microseconds
   DEFAULT_FORCE_GC_PERIOD = 2.minutes
   DEFAULT_BYTES_SINCE_GC_THRESHOLD = 0u64
   IDLE_DETECTION_REPEAT = 1
@@ -30,7 +31,6 @@ class PeriodicGC
   @@mu : Mutex = Mutex.new(Mutex::Protection::Reentrant)
   @@running : Channel(Nil)? = nil
   @@poll_interval : Time::Span = DEFAULT_POLL_INTERVAL
-  @@idle_threshold : Time::Span = DEFAULT_IDLE_THRESHOLD
   @@force_gc_period : Time::Span? = DEFAULT_FORCE_GC_PERIOD
   @@only_if_idle : Bool = DEFAULT_ONLY_IF_IDLE
   @@bytes_since_gc_threshold : UInt64 = DEFAULT_BYTES_SINCE_GC_THRESHOLD
@@ -56,15 +56,6 @@ class PeriodicGC
         stop_channel.close
         @@running = spawn_loop
       end
-    end
-  end
-
-  # Set the idle threshold for comparing to `#fiber_yield_time`.
-  #
-  # Experimentally, I found Fiber.yield took about ~5us when idle, and ~500us (or more) when busy, but this will depend on your workload.
-  def self.idle_threshold=(v : Time::Span) : Nil
-    @@mu.synchronize do
-      @@idle_threshold = v
     end
   end
 
@@ -167,33 +158,12 @@ class PeriodicGC
 
   # Collect now, but only if process is idle.
   def self.collect_if_idle : Bool
-    if process_is_idle?
+    if PeriodicGC::Idle.process_is_idle?
       collect
       true
     else
       false
     end
-  end
-
-  # How long does it take for Fiber.yield to return?
-  #
-  # This is a measure of whether there are other Fibers waiting to do work.
-  def self.fiber_yield_time : Time::Span
-    start_time = Time.monotonic
-    Fiber.yield
-    end_time = Time.monotonic
-
-    end_time - start_time
-  end
-
-  # Return true if the process is idle, as determined by `#fiber_yield_time` compared to `#idle_threshold=`.
-  def self.process_is_idle? : Bool
-    cutoff : Time::Span? = nil
-    @@mu.synchronize { cutoff = @@idle_threshold }
-    cutoff = cutoff.not_nil!
-
-    # Check multiple times to reduce false positive rate
-    IDLE_DETECTION_REPEAT.times.all? { fiber_yield_time < cutoff }
   end
 
   ### INTERNAL METHODS
@@ -244,7 +214,7 @@ class PeriodicGC
   end
 
   protected def self.collect_if_idle_and_needed!
-    collect_if_needed! if process_is_idle?
+    collect_if_needed! if PeriodicGC::Idle.process_is_idle?
   end
 
   protected def self.collect_if_needed!

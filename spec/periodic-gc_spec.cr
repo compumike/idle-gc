@@ -1,7 +1,5 @@
 require "./spec_helper"
 
-# Start a background worker.
-
 describe PeriodicGC do
   it "heap warmup" do
     # Allocate and free some memory so random heap collections don't fire
@@ -81,27 +79,6 @@ describe PeriodicGC do
     sleep(10.milliseconds)
   end
 
-  it "#process_is_idle? is accurate" do
-    100.times do
-      PeriodicGC.process_is_idle?.should be_true
-      sleep(100.microseconds)
-    end
-
-    # Start a worker
-    worker_stop_channel = spawn_background_worker(1.millisecond)
-    100.times do
-      PeriodicGC.process_is_idle?.should be_false
-      sleep(100.microseconds)
-    end
-
-    # Stop the worker
-    worker_stop_channel.close
-    sleep(10.milliseconds)
-    100.times do
-      PeriodicGC.process_is_idle?.should be_true
-      sleep(100.microseconds)
-    end
-  end
 
   it "starts, stops, and frees memory (only_if_idle=true)" do
     PeriodicGC.stop

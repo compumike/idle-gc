@@ -1,4 +1,4 @@
-class PeriodicGC
+class IdleGC
   class Timer
     DEFAULT_POLL_INTERVAL = 1.second
     DEFAULT_ONLY_IF_IDLE = true
@@ -19,7 +19,7 @@ class PeriodicGC
     #
     # The sweet spot is probably seconds to minutes.
     def self.poll_interval=(v : Time::Span) : Nil
-      PeriodicGC.mu.synchronize do
+      IdleGC.mu.synchronize do
         return if @@poll_interval == v
         @@poll_interval = v
 
@@ -38,7 +38,7 @@ class PeriodicGC
     #
     # Defaults to 2 minutes.
     def self.force_gc_period=(v : Time::Span?) : Nil
-      PeriodicGC.mu.synchronize do
+      IdleGC.mu.synchronize do
         @@force_gc_period = v
       end
     end
@@ -49,7 +49,7 @@ class PeriodicGC
     #
     # The default is false: GC will run whenever the poll interval expires, regardless of whether the system is busy.
     def self.only_if_idle=(v : Bool) : Nil
-      PeriodicGC.mu.synchronize do
+      IdleGC.mu.synchronize do
         @@only_if_idle = v
       end
     end
@@ -58,7 +58,7 @@ class PeriodicGC
     #
     # Default is 0, meaning that any allocated memory will trigger a collection.
     def self.bytes_since_gc_threshold=(v : UInt64) : Nil
-      PeriodicGC.mu.synchronize do
+      IdleGC.mu.synchronize do
         @@bytes_since_gc_threshold = v
       end
     end
@@ -67,10 +67,10 @@ class PeriodicGC
     #
     # (Also runs garbage collection immediately.)
     def self.start : Nil
-      PeriodicGC.mu.synchronize do
+      IdleGC.mu.synchronize do
         return if @@running
 
-        PeriodicGC.collect_now!
+        IdleGC.collect_now!
 
         @@running = spawn_loop
       end
@@ -78,9 +78,9 @@ class PeriodicGC
 
     # Stop periodic garbage collection. Used for testing.
     #
-    # (You don't need to call this. Just let PeriodicGC die naturally when your program exits.)
+    # (You don't need to call this. Just let IdleGC die naturally when your program exits.)
     def self.stop : Nil
-      PeriodicGC.mu.synchronize do
+      IdleGC.mu.synchronize do
         stop_channel = @@running
         if !stop_channel.nil?
           stop_channel.close
@@ -109,7 +109,7 @@ class PeriodicGC
       fgp = @@force_gc_period
       return false if fgp.nil?
 
-      lca = PeriodicGC.last_collected_at
+      lca = IdleGC.last_collected_at
       return true if lca.nil?
 
       (Time.monotonic - lca) > fgp
@@ -118,12 +118,12 @@ class PeriodicGC
     protected def self.loop_callback : Nil
       sleep_period : Time::Span? = nil
 
-      PeriodicGC.mu.synchronize do
-        PeriodicGC.last_checked_at = Time.monotonic
+      IdleGC.mu.synchronize do
+        IdleGC.last_checked_at = Time.monotonic
         sleep_period = @@poll_interval
 
         if should_force_collect?
-          PeriodicGC.collect_now!
+          IdleGC.collect_now!
         else
           if @@only_if_idle
             collect_if_idle_and_needed!
@@ -137,13 +137,13 @@ class PeriodicGC
     end
 
     protected def self.collect_if_idle_and_needed!
-      collect_if_needed! if PeriodicGC::Idle.process_is_idle?
+      collect_if_needed! if IdleGC::Idle.process_is_idle?
     end
 
     protected def self.collect_if_needed!
       return if GC.stats.bytes_since_gc <= @@bytes_since_gc_threshold
 
-      PeriodicGC.collect_now!
+      IdleGC.collect_now!
     end
   end
 end

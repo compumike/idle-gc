@@ -1,4 +1,4 @@
-class PeriodicGC
+class IdleGC
   class Idle
     DEFAULT_IDLE_THRESHOLD = 100.microseconds
     IDLE_DETECTION_REPEAT = 1
@@ -16,7 +16,7 @@ class PeriodicGC
       end_time - start_time
     end
 
-    # Set the idle threshold for comparing to `PeriodicGC::Idle.fiber_yield_time`.
+    # Set the idle threshold for comparing to `IdleGC::Idle.fiber_yield_time`.
     #
     # Experimentally, I found Fiber.yield took about ~5us when idle, and ~500us (or more) when busy, but this will depend on your workload.
     def self.idle_threshold=(v : Time::Span) : Nil

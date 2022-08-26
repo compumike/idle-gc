@@ -1,7 +1,7 @@
 require "digest/md5"
 require "spec"
 
-require "../src/periodic-gc"
+require "../src/idle-gc"
 
 STDOUT.sync = true
 

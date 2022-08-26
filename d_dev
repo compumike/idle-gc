@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")"
 
 DOCKER_VOLUME="-v `pwd`:/app"
-DOCKER_IMAGE="periodic-gc-dev"
+DOCKER_IMAGE="idle-gc-dev"
 DOCKER_ARGS="${DOCKER_VOLUME}"
 
 DOCKER_BUILDKIT=1 docker build -t ${DOCKER_IMAGE} -f Dockerfile .

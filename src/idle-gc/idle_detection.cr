@@ -1,5 +1,5 @@
 class IdleGC
-  class Idle
+  class IdleDetection
     DEFAULT_IDLE_THRESHOLD = 100.microseconds
     DEFAULT_IDLE_DETECTION_REPEAT = 1u8
 
@@ -18,7 +18,7 @@ class IdleGC
       end_time - start_time
     end
 
-    # Set the idle threshold for comparing to `IdleGC::Idle.fiber_yield_time`.
+    # Set the idle threshold for comparing to `IdleGC::IdleDetection.fiber_yield_time`.
     #
     # Experimentally, I found Fiber.yield took about ~5us when idle, and ~500us (or more) when busy, but this will depend on your workload.
     def self.idle_threshold=(v : Time::Span) : Nil
@@ -27,9 +27,9 @@ class IdleGC
       end
     end
 
-    # Idle detection is enabled by default, but it is based on a heuristic which may be inaccurate, so you may wish to disable it by calling `IdleGC::Idle.enabled = false`.
+    # Idle detection is enabled by default, but it is based on a heuristic which may be inaccurate, so you may wish to disable it by calling `IdleGC::IdleDetection.enabled = false`.
     #
-    # If disabled, then `#process_is_idle?` will always return true.
+    # If disabled, then `IdleGC::IdleDetection.process_is_idle?` will always return true, so the IdleGC garbage collection will always run.
     #
     # If your workload is not latency-sensitive, then running GC periodicially regardless of whether the system is idle may be optimal.
     def self.enabled=(v : Bool) : Nil

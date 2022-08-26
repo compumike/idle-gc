@@ -1,4 +1,4 @@
-require "./idle-gc/idle"
+require "./idle-gc/idle_detection"
 require "./idle-gc/timer"
 
 # IdleGC runs garbage collection periodically in order to keep memory usage low. It attempts to do so when the process is otherwise idle.
@@ -15,7 +15,7 @@ require "./idle-gc/timer"
 #
 # By default, IdleGC polls every 1 second, and if more than 0 bytes have been allocated on the heap, it runs garbage collection. To make IdleGC less aggressive (and use less CPU time, at the cost of higher memory usage), you may raise both of these settings, for example: `IdleGC::Timer.poll_interval = 5.seconds` and `IdleGC::Timer.bytes_since_gc_threshold = 128*1024`.
 #
-# Idle detection is based on a measurement of how long it takes `Fiber.yield` to return, and can be tuned with `IdleGC::Idle.idle_threshold=`. If interactive performance (latency) is not a concern for your application, it is recommended that you disable idle detection with `IdleGC::Timer.only_if_idle = false`.
+# Idle detection is based on a measurement of how long it takes `Fiber.yield` to return, and can be tuned with `IdleGC::IdleDetection.idle_threshold=`. If interactive performance (latency) is not a concern for your application, it is recommended that you disable idle detection with `IdleGC::IdleDetection.enabled = false`.
 #
 # Since idle detection may be inaccurate, there is a `IdleGC::Timer.force_gc_period=` which is set to force a collection every 2 minutes by default. You may disable this with `IdleGC::Timer.force_gc_period = nil`.
 #
@@ -79,7 +79,7 @@ class IdleGC
 
   # Collect now, but only if process is idle.
   def self.collect_if_idle : Bool
-    if IdleGC::Idle.process_is_idle?
+    if IdleGC::IdleDetection.process_is_idle?
       collect
       true
     else
@@ -98,7 +98,7 @@ class IdleGC
   end
 
   protected def self.collect_if_idle_and_needed!
-    collect_if_needed! if IdleGC::Idle.process_is_idle?
+    collect_if_needed! if IdleGC::IdleDetection.process_is_idle?
   end
 
   protected def self.collect_if_needed!

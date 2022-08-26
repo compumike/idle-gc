@@ -1,14 +1,12 @@
 class IdleGC
   class Timer
     DEFAULT_POLL_INTERVAL = 1.second
-    DEFAULT_ONLY_IF_IDLE = true
     DEFAULT_FORCE_GC_PERIOD = 2.minutes
     DEFAULT_BYTES_SINCE_GC_THRESHOLD = 0u64
 
     @@running : Channel(Nil)? = nil
     @@poll_interval : Time::Span = DEFAULT_POLL_INTERVAL
     @@force_gc_period : Time::Span? = DEFAULT_FORCE_GC_PERIOD
-    @@only_if_idle : Bool = DEFAULT_ONLY_IF_IDLE
     @@bytes_since_gc_threshold : UInt64 = DEFAULT_BYTES_SINCE_GC_THRESHOLD
 
     ### PUBLIC METHODS
@@ -32,7 +30,7 @@ class IdleGC
       end
     end
 
-    # Set the force GC period, which forces a GC run when non-idle, even if only_if_idle=true.
+    # Set the force GC period, which forces a GC run when non-idle.
     #
     # Set to nil to disable this behavior.
     #
@@ -40,17 +38,6 @@ class IdleGC
     def self.force_gc_period=(v : Time::Span?) : Nil
       IdleGC.mu.synchronize do
         @@force_gc_period = v
-      end
-    end
-
-    # Set to true if we should only run GC when the process appears to be idle.
-    #
-    # This is recommended for interactive applications, such as web servers.
-    #
-    # The default is false: GC will run whenever the poll interval expires, regardless of whether the system is busy.
-    def self.only_if_idle=(v : Bool) : Nil
-      IdleGC.mu.synchronize do
-        @@only_if_idle = v
       end
     end
 
@@ -125,11 +112,7 @@ class IdleGC
         if should_force_collect?
           IdleGC.collect_now!
         else
-          if @@only_if_idle
-            collect_if_idle_and_needed!
-          else
-            collect_if_needed!
-          end
+          collect_if_idle_and_needed!
         end
       end
 
@@ -137,7 +120,7 @@ class IdleGC
     end
 
     protected def self.collect_if_idle_and_needed!
-      collect_if_needed! if IdleGC::Idle.process_is_idle?
+      collect_if_needed! if IdleGC::IdleDetection.process_is_idle?
     end
 
     protected def self.collect_if_needed!

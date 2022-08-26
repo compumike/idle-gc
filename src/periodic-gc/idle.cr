@@ -1,6 +1,7 @@
 class PeriodicGC
   class Idle
     DEFAULT_IDLE_THRESHOLD = 100.microseconds
+    IDLE_DETECTION_REPEAT = 1
 
     @@idle_threshold : Time::Span = DEFAULT_IDLE_THRESHOLD
 

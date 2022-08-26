@@ -17,7 +17,9 @@ TODO: Write a description here
 ## Usage
 
 ```crystal
-require "periodic-gc"
+require "idle-gc"
+
+IdleGC.start
 ```
 
 TODO: Write usage instructions here

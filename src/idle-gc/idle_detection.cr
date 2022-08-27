@@ -5,7 +5,7 @@ class IdleGC
 
     @@enabled : Atomic(UInt8) = Atomic(UInt8).new(1u8)
     @@idle_detection_repeat : Atomic(UInt8) = Atomic(UInt8).new(DEFAULT_IDLE_DETECTION_REPEAT)
-    @@idle_threshold : Time::Span = DEFAULT_IDLE_THRESHOLD
+    @@idle_threshold_ns : Atomic(UInt64) = Atomic(UInt64).new(DEFAULT_IDLE_THRESHOLD.total_nanoseconds.to_u64)
 
     # How long does it take for Fiber.yield to return?
     #
@@ -18,13 +18,15 @@ class IdleGC
       end_time - start_time
     end
 
+    def self.fiber_yield_time_ns : UInt64
+      fiber_yield_time.total_nanoseconds.to_u64
+    end
+
     # Set the idle threshold for comparing to `IdleGC::IdleDetection.fiber_yield_time`.
     #
     # Experimentally, I found Fiber.yield took about ~5us when idle, and ~500us (or more) when busy, but this will depend on your workload.
     def self.idle_threshold=(v : Time::Span) : Nil
-      IdleGC.mu.synchronize do
-        @@idle_threshold = v
-      end
+      @@idle_threshold_ns.set(v.total_nanoseconds)
     end
 
     # Idle detection is enabled by default, but it is based on a heuristic which may be inaccurate, so you may wish to disable it by calling `IdleGC::IdleDetection.enabled = false`.
@@ -51,7 +53,9 @@ class IdleGC
 
       # Check multiple times to reduce false positive rate
       idle_detection_repeat = @@idle_detection_repeat.get
-      idle_detection_repeat.times.all? { fiber_yield_time < @@idle_threshold }
+      idle_threshold_ns = @@idle_threshold_ns.get
+
+      idle_detection_repeat.times.all? { fiber_yield_time_ns < idle_threshold_ns }
     end
   end
 end

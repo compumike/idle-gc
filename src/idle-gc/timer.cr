@@ -57,7 +57,7 @@ class IdleGC
       IdleGC.mu.synchronize do
         return if @@running
 
-        IdleGC.collect_now!
+        IdleGC.collect
 
         @@running = spawn_loop
       end
@@ -110,23 +110,17 @@ class IdleGC
         sleep_period = @@poll_interval
 
         if should_force_collect?
-          IdleGC.collect_now!
+          # Force collection: always call GC.collect, regardless of # of bytes_since_gc, and regardless of idleness.
+          IdleGC.collect
         else
-          collect_if_idle_and_needed!
+          # Idle collection: only call GC.collect if we pass bytes_since_gc and idleness constraints.
+          if GC.stats.bytes_since_gc > @@bytes_since_gc_threshold
+            IdleGC.collect_if_idle
+          end
         end
       end
 
       sleep(sleep_period.not_nil!)
-    end
-
-    protected def self.collect_if_idle_and_needed!
-      collect_if_needed! if IdleGC::IdleDetection.process_is_idle?
-    end
-
-    protected def self.collect_if_needed!
-      return if GC.stats.bytes_since_gc <= @@bytes_since_gc_threshold
-
-      IdleGC.collect_now!
     end
   end
 end

@@ -96,24 +96,4 @@ class IdleGC
   protected def self.last_checked_at=(v : Time::Span?)
     @@last_checked_at = v
   end
-
-  protected def self.collect_if_idle_and_needed!
-    collect_if_needed! if IdleGC::IdleDetection.process_is_idle?
-  end
-
-  protected def self.collect_if_needed!
-    return if GC.stats.bytes_since_gc <= @@bytes_since_gc_threshold
-
-    collect_now!
-  end
-
-  protected def self.collect_now!
-    start_time = Time.monotonic
-    GC.collect
-    end_time = Time.monotonic
-
-    @@last_checked_at = start_time
-    @@last_collected_at = start_time
-    @@last_collected_duration = end_time - start_time
-  end
 end

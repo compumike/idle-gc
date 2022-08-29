@@ -92,4 +92,31 @@ describe IdleGC do
 
     IdleGC.background_collect_poll_interval = IdleGC::DEFAULT_BACKGROUND_COLLECT_POLL_INTERVAL
   end
+
+  it "IdleGC.background_collect is cancelled by a synchronous IdleGC.collect" do
+    IdleGC::Timer.stop
+    IdleGC.collect
+
+    # Start a background worker.
+    worker_stop_channel = spawn_background_worker(1.millisecond)
+    sleep(10.milliseconds)
+
+    # Request background collection
+    before_collect = IdleGC.last_collected_at.not_nil!
+    IdleGC.background_collect.should be_true
+
+    # Request synchronous collection
+    IdleGC.collect
+    after_collect = IdleGC.last_collected_at.not_nil!
+    after_collect.should be > before_collect
+
+    # Stop worker. Should collect.
+    worker_stop_channel.close
+    sleep(5.milliseconds)
+
+    # Background collection shouldn't happen
+    # Should collect in background
+    sleep(25.milliseconds)
+    IdleGC.last_collected_at.not_nil!.should eq(after_collect)
+  end
 end

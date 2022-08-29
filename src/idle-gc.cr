@@ -120,19 +120,28 @@ class IdleGC
   end
 
   protected def self.spawn_background_collect_fiber : Nil
+    requested_at = Time.monotonic
+
     spawn do
-      previous_collected_at = mu.synchronize { @@last_collected_at }
+      do_collect = true
 
       poll_sleep_ns = @@background_collect_poll_interval_ns.get
       poll_sleep = poll_sleep_ns.nanoseconds
 
       loop do
+        # Skip if there's been a collection in the meantime
+        collected_at = mu.synchronize { @@last_collected_at }
+        if collected_at && (collected_at > requested_at)
+          do_collect = false
+          break
+        end
+
         break if IdleGC::IdleDetection.process_is_idle?
 
         sleep(poll_sleep)
       end
 
-      collect
+      collect if do_collect
 
       @@background_collect_running.clear
     end

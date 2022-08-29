@@ -1,4 +1,5 @@
 require "./idle-gc/idle_detection"
+require "./idle-gc/request"
 require "./idle-gc/timer"
 
 # IdleGC runs garbage collection periodically in order to keep memory usage low. It attempts to do so when the process is otherwise idle.
@@ -12,6 +13,8 @@ require "./idle-gc/timer"
 # That is all that most use cases will need! Tweaks and tuning information are below.
 #
 # You may manually force a collection now (synchronously) with `IdleGC.collect`. Or, if you would like to manually run collection synchronously but only if idle, call `IdleGC.collect_if_idle`. To request a collection at the next idle opportunity, use `IdleGC.background_collect`.
+#
+# In addition to timer-based periodic operation which is started by `IdleGC.start`, you may wish to use request-based operation. For example, this could do background GC after every 100 web requests, or after every 10 MB served. To use this mode, first set `IdleGC::Request.request_limit = 100*1024*1024` (for example), and then call `IdleGC::Request.request(num_bytes)` to increment. This `IdleGC::Request` module will wait until the count overflows your limit, and will then fire off an `IdleGC.background_collect`.
 #
 # In the extremely unlikely case that your code does not yield or do any I/O, you may need to add explicit calls to `Fiber.yield` to allow IdleGC's background Fiber to have a chance to work.
 #

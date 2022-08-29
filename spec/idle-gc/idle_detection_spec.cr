@@ -51,4 +51,12 @@ describe IdleGC::IdleDetection do
     IdleGC::IdleDetection.enabled.should be_true
     IdleGC::IdleDetection.process_is_idle?.should be_true
   end
+
+  it "#idle_threshold= works" do
+    IdleGC::IdleDetection.process_is_idle?.should be_true
+    IdleGC::IdleDetection.idle_threshold = 1.nanosecond
+    IdleGC::IdleDetection.process_is_idle?.should be_false
+    IdleGC::IdleDetection.idle_threshold = IdleGC::IdleDetection::DEFAULT_IDLE_THRESHOLD
+    IdleGC::IdleDetection.process_is_idle?.should be_true
+  end
 end

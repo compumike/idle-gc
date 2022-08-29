@@ -26,7 +26,7 @@ class IdleGC
     #
     # Experimentally, I found Fiber.yield took about ~5us when idle, and ~500us (or more) when busy, but this will depend on your workload.
     def self.idle_threshold=(v : Time::Span) : Nil
-      @@idle_threshold_ns.set(v.total_nanoseconds)
+      @@idle_threshold_ns.set(v.total_nanoseconds.to_u64)
     end
 
     # Idle detection is enabled by default, but it is based on a heuristic which may be inaccurate, so you may wish to disable it by calling `IdleGC::IdleDetection.enabled = false`.

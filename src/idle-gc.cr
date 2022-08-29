@@ -11,22 +11,26 @@ require "./idle-gc/timer"
 #
 # That is all that most use cases will need! Tweaks and tuning information are below.
 #
-# In the extremely rare case that your code does not yield or do any I/O, you may need to add explicit calls to `Fiber.yield` to allow IdleGC's background Fiber to have a chance to work.
+# You may manually force a collection now (synchronously) with `IdleGC.collect`. Or, if you would like to manually run collection synchronously but only if idle, call `IdleGC.collect_if_idle`. To request a collection at the next idle opportunity, use `IdleGC.background_collect`.
 #
-# By default, IdleGC polls every 1 second, and if more than 0 bytes have been allocated on the heap, it runs garbage collection. To make IdleGC less aggressive (and use less CPU time, at the cost of higher memory usage), you may raise both of these settings, for example: `IdleGC::Timer.poll_interval = 5.seconds` and `IdleGC::Timer.bytes_since_gc_threshold = 128*1024`.
+# In the extremely unlikely case that your code does not yield or do any I/O, you may need to add explicit calls to `Fiber.yield` to allow IdleGC's background Fiber to have a chance to work.
+#
+# By default, IdleGC::Timer polls every 1 second, and if more than 0 bytes have been allocated on the heap, it runs garbage collection. To make IdleGC::Timer less aggressive (and use less CPU time, at the cost of higher memory usage), you may raise both of these settings, for example: `IdleGC::Timer.poll_interval = 5.seconds` and `IdleGC::Timer.bytes_since_gc_threshold = 128*1024`.
 #
 # Idle detection is based on a measurement of how long it takes `Fiber.yield` to return, and can be tuned with `IdleGC::IdleDetection.idle_threshold=`. If interactive performance (latency) is not a concern for your application, it is recommended that you disable idle detection with `IdleGC::IdleDetection.enabled = false`.
 #
 # Since idle detection may be inaccurate, there is a `IdleGC::Timer.force_gc_period=` which is set to force a collection every 2 minutes by default. You may disable this with `IdleGC::Timer.force_gc_period = nil`.
-#
-# You may manually force a collection now with `IdleGC.collect`. Or, if you would like to manually run collection only if idle, call `IdleGC.collect_if_idle`.
 class IdleGC
   VERSION = "0.1.0"
+
+  DEFAULT_BACKGROUND_COLLECT_POLL_INTERVAL = 10.milliseconds
 
   @@mu : Mutex = Mutex.new(Mutex::Protection::Reentrant)
   @@last_checked_at : Time::Span? = nil
   @@last_collected_at : Time::Span? = nil
   @@last_collected_duration : Time::Span? = nil
+  @@background_collect_running : Atomic::Flag = Atomic::Flag.new
+  @@background_collect_poll_interval_ns : Atomic(UInt64) = Atomic(UInt64).new(DEFAULT_BACKGROUND_COLLECT_POLL_INTERVAL.total_nanoseconds.to_u64)
 
   ### PUBLIC METHODS
 
@@ -87,6 +91,24 @@ class IdleGC
     end
   end
 
+  # How often should the background_collect Fiber check for idle?
+  def self.background_collect_poll_interval=(v : Time::Span) : Nil
+    @@background_collect_poll_interval_ns.set(v.total_nanoseconds.to_u64)
+  end
+
+  # Kick off a Fiber to do collection at the next idle opportunity.
+  #
+  # Returns true if a background collection was scheduled.
+  # Returns false if there was already one scheduled.
+  def self.background_collect : Bool
+    should_spawn = @@background_collect_running.test_and_set
+    return false unless should_spawn
+
+    spawn_background_collect_fiber
+
+    true
+  end
+
   ### INTERNAL METHODS
 
   protected def self.mu : Mutex
@@ -95,5 +117,24 @@ class IdleGC
 
   protected def self.last_checked_at=(v : Time::Span?)
     @@last_checked_at = v
+  end
+
+  protected def self.spawn_background_collect_fiber : Nil
+    spawn do
+      previous_collected_at = mu.synchronize { @@last_collected_at }
+
+      poll_sleep_ns = @@background_collect_poll_interval_ns.get
+      poll_sleep = poll_sleep_ns.nanoseconds
+
+      loop do
+        break if IdleGC::IdleDetection.process_is_idle?
+
+        sleep(poll_sleep)
+      end
+
+      collect
+
+      @@background_collect_running.clear
+    end
   end
 end

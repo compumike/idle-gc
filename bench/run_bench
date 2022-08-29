@@ -2,4 +2,6 @@
 time -v out/idle-gc-bench
 time -v out/idle-gc-bench --start
 time -v out/idle-gc-bench --sync-every
-time -v out/idle-gc-bench --request-limit=2
+time -v out/idle-gc-bench --background-every
+time -v out/idle-gc-bench --start --sync-every
+time -v out/idle-gc-bench --start --request-limit=2

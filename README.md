@@ -1,6 +1,6 @@
 # idle-gc
 
-**IdleGC** makes it easy to automatically run garbage collection when the process is otherwise idle. Idle-time garbage collection is beneficial because:
+**IdleGC** makes it easy to automatically run garbage collection when your [Crystal](https://crystal-lang.org/) process is otherwise idle. Idle-time garbage collection is beneficial because:
 
 1. It reduces the memory size of the program, reducing operating costs, and
 2. It may prevent the garbage collector from running during a latency-sensitive period.

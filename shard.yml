@@ -1,5 +1,5 @@
 name: idle-gc
-version: 0.1.0
+version: 1.0.0
 description: |
   Reduce memory footprint by periodically running garbage collection when idle
 

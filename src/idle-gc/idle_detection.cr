@@ -19,7 +19,12 @@ class IdleGC
     end
 
     def self.fiber_yield_time_ns : UInt64
-      fiber_yield_time.total_nanoseconds.to_u64
+      # In practice, I found that Time.monotonic wasn't always monotonic!
+      begin
+        fiber_yield_time.total_nanoseconds.to_u64
+      rescue OverflowError
+        0u64
+      end
     end
 
     # Set the idle threshold for comparing to `IdleGC::IdleDetection.fiber_yield_time`.

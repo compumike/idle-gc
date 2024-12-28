@@ -1,11 +1,11 @@
 name: idle-gc
-version: 1.0.1
+version: 1.0.2
 description: |
   Reduce memory footprint by periodically running garbage collection when idle
 
 authors:
   - Michael F. Robbins <mrobbins@alum.mit.edu>
 
-crystal: 1.7.2
+crystal: '>= 1.0.0'
 
 license: MIT

@@ -9,7 +9,10 @@
 
 If you have request-oriented processing, such as in a web server, you may additionally call `IdleGC.background_collect` near the end of your request cycle. This won't block your response from completing, but will only collect after the system is idle. It's perfectly safe to call `IdleGC.background_collect` multiple times, and it will only schedule a single collection if it hasn't had a chance to run yet.
 
-**IdleGC** is currently used in production on [Total Real Returns](https://totalrealreturns.com/).
+**IdleGC** is currently used in production on:
+
+-  [Heii On-Call](https://heiioncall.com/)
+-  [Total Real Returns](https://totalrealreturns.com/)
 
 ## Benchmarks
 

@@ -25,7 +25,7 @@ require "./idle-gc/timer"
 #
 # Since idle detection may be inaccurate, there is a `IdleGC::Timer.force_gc_period=` which is set to force a collection every 2 minutes by default. You may disable this with `IdleGC::Timer.force_gc_period = nil`.
 class IdleGC
-  VERSION = "1.0.1"
+  VERSION = "1.0.2"
 
   DEFAULT_BACKGROUND_COLLECT_POLL_INTERVAL = 10.milliseconds
 

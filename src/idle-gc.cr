@@ -36,7 +36,7 @@ class IdleGC
   @@background_collect_running : Atomic::Flag = Atomic::Flag.new
   @@background_collect_poll_interval_ns : Atomic(UInt64) = Atomic(UInt64).new(DEFAULT_BACKGROUND_COLLECT_POLL_INTERVAL.total_nanoseconds.to_u64)
 
-  ### PUBLIC METHODS
+  # ## PUBLIC METHODS
 
   # Start a background Fiber that runs garbage collection periodically.
   #
@@ -113,7 +113,7 @@ class IdleGC
     true
   end
 
-  ### INTERNAL METHODS
+  # ## INTERNAL METHODS
 
   protected def self.mu : Mutex
     @@mu

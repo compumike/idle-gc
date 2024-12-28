@@ -4,9 +4,9 @@ require "option_parser"
 require "../src/idle-gc"
 
 class IdleGCBench
-  ALLOC_STRING_SIZE = 2000000u64
-  REQUEST_BATCHES = 50
-  REQUEST_COUNT = 5
+  ALLOC_STRING_SIZE   = 2000000u64
+  REQUEST_BATCHES     =         50
+  REQUEST_COUNT       =          5
   REQUEST_BATCH_DELAY = 200.milliseconds
 
   @start = false
@@ -18,6 +18,7 @@ class IdleGCBench
 
   class ArrayWithFinalizer
     @arr : Array(String) = Array(String).new
+
     def initialize
     end
 
@@ -83,7 +84,7 @@ class IdleGCBench
       IdleGC::Request.request if @bench.request_limit > 0
     end
 
-    def wait_for_requested_at :  Nil
+    def wait_for_requested_at : Nil
       now = Time.monotonic
       loop do
         break if now >= @requested_at
@@ -142,7 +143,7 @@ class IdleGCBench
   def start
     5.times { IdleGC.collect }
 
-    ### BEGIN REQUESTS
+    # ## BEGIN REQUESTS
 
     start_time = Time.monotonic
     completion_channel = Channel(Nil).new(REQUEST_BATCHES * REQUEST_COUNT)
@@ -158,7 +159,7 @@ class IdleGCBench
     end
     end_time = Time.monotonic
 
-    ### END REQUESTS
+    # ## END REQUESTS
 
     gc_stats_before_compact = GC.stats
     5.times { IdleGC.collect }

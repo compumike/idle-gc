@@ -1,7 +1,7 @@
 class IdleGC
   class Request
     DEFAULT_REQUEST_LIMIT = 1u64
-    DEFAULT_SYNCHRONOUS = false
+    DEFAULT_SYNCHRONOUS   = false
 
     @@request_count : Atomic(UInt64) = Atomic(UInt64).new(0u64)
     @@request_limit : Atomic(UInt64) = Atomic(UInt64).new(DEFAULT_REQUEST_LIMIT)
@@ -18,7 +18,7 @@ class IdleGC
     end
 
     # Set the request limit.
-    # 
+    #
     # (Merely setting the request limit will not cause garbage collection to fire.)
     def self.request_limit=(v : UInt64) : Nil
       @@request_limit.set(v)

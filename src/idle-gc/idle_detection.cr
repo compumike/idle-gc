@@ -1,6 +1,6 @@
 class IdleGC
   class IdleDetection
-    DEFAULT_IDLE_THRESHOLD = 100.microseconds
+    DEFAULT_IDLE_THRESHOLD        = 100.microseconds
     DEFAULT_IDLE_DETECTION_REPEAT = 1u8
 
     @@enabled : Atomic(UInt8) = Atomic(UInt8).new(1u8)

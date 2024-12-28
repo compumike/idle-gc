@@ -1,7 +1,7 @@
 class IdleGC
   class Timer
-    DEFAULT_POLL_INTERVAL = 1.second
-    DEFAULT_FORCE_GC_PERIOD = 2.minutes
+    DEFAULT_POLL_INTERVAL            = 1.second
+    DEFAULT_FORCE_GC_PERIOD          = 2.minutes
     DEFAULT_BYTES_SINCE_GC_THRESHOLD = 0u64
 
     @@running : Channel(Nil)? = nil
@@ -9,7 +9,7 @@ class IdleGC
     @@force_gc_period : ::Time::Span? = DEFAULT_FORCE_GC_PERIOD
     @@bytes_since_gc_threshold : UInt64 = DEFAULT_BYTES_SINCE_GC_THRESHOLD
 
-    ### PUBLIC METHODS
+    # ## PUBLIC METHODS
 
     # Set the polling interval.
     #
@@ -76,7 +76,7 @@ class IdleGC
       end
     end
 
-    ### INTERNAL METHODS
+    # ## INTERNAL METHODS
 
     protected def self.spawn_loop : Channel(Nil)
       stop_channel = Channel(Nil).new

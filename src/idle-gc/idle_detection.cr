@@ -10,16 +10,16 @@ class IdleGC
     # How long does it take for Fiber.yield to return?
     #
     # This is a measure of whether there are other Fibers waiting to do work.
-    def self.fiber_yield_time : Time::Span
-      start_time = Time.monotonic
+    def self.fiber_yield_time : ::Time::Span
+      start_time = IdleGC::Time.monotonic
       Fiber.yield
-      end_time = Time.monotonic
+      end_time = IdleGC::Time.monotonic
 
       end_time - start_time
     end
 
     def self.fiber_yield_time_ns : UInt64
-      # In practice, I found that Time.monotonic wasn't always monotonic!
+      # In practice, I found that Time.monotonic wasn't always monotonic! But this may be due to Timecop.
       begin
         fiber_yield_time.total_nanoseconds.to_u64
       rescue OverflowError
@@ -30,7 +30,7 @@ class IdleGC
     # Set the idle threshold for comparing to `IdleGC::IdleDetection.fiber_yield_time`.
     #
     # Experimentally, I found Fiber.yield took about ~5us when idle, and ~500us (or more) when busy, but this will depend on your workload.
-    def self.idle_threshold=(v : Time::Span) : Nil
+    def self.idle_threshold=(v : ::Time::Span) : Nil
       @@idle_threshold_ns.set(v.total_nanoseconds.to_u64)
     end
 

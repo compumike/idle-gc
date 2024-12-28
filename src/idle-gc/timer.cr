@@ -5,8 +5,8 @@ class IdleGC
     DEFAULT_BYTES_SINCE_GC_THRESHOLD = 0u64
 
     @@running : Channel(Nil)? = nil
-    @@poll_interval : Time::Span = DEFAULT_POLL_INTERVAL
-    @@force_gc_period : Time::Span? = DEFAULT_FORCE_GC_PERIOD
+    @@poll_interval : ::Time::Span = DEFAULT_POLL_INTERVAL
+    @@force_gc_period : ::Time::Span? = DEFAULT_FORCE_GC_PERIOD
     @@bytes_since_gc_threshold : UInt64 = DEFAULT_BYTES_SINCE_GC_THRESHOLD
 
     ### PUBLIC METHODS
@@ -16,7 +16,7 @@ class IdleGC
     # Polling more frequently will keep memory usage lower, but will burn more CPU time on garbage collection.
     #
     # The sweet spot is probably seconds to minutes.
-    def self.poll_interval=(v : Time::Span) : Nil
+    def self.poll_interval=(v : ::Time::Span) : Nil
       IdleGC.mu.synchronize do
         return if @@poll_interval == v
         @@poll_interval = v
@@ -35,7 +35,7 @@ class IdleGC
     # Set to nil to disable this behavior.
     #
     # Defaults to 2 minutes.
-    def self.force_gc_period=(v : Time::Span?) : Nil
+    def self.force_gc_period=(v : ::Time::Span?) : Nil
       IdleGC.mu.synchronize do
         @@force_gc_period = v
       end
@@ -103,10 +103,10 @@ class IdleGC
     end
 
     protected def self.loop_callback : Nil
-      sleep_period : Time::Span? = nil
+      sleep_period : ::Time::Span? = nil
 
       IdleGC.mu.synchronize do
-        IdleGC.last_checked_at = Time.monotonic
+        IdleGC.last_checked_at = IdleGC::Time.monotonic
         sleep_period = @@poll_interval
 
         if should_force_collect?

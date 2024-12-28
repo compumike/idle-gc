@@ -1,5 +1,6 @@
 require "./idle-gc/idle_detection"
 require "./idle-gc/request"
+require "./idle-gc/time"
 require "./idle-gc/timer"
 
 # IdleGC runs garbage collection periodically in order to keep memory usage low. It attempts to do so when the process is otherwise idle.
@@ -29,9 +30,9 @@ class IdleGC
   DEFAULT_BACKGROUND_COLLECT_POLL_INTERVAL = 10.milliseconds
 
   @@mu : Mutex = Mutex.new(Mutex::Protection::Reentrant)
-  @@last_checked_at : Time::Span? = nil
-  @@last_collected_at : Time::Span? = nil
-  @@last_collected_duration : Time::Span? = nil
+  @@last_checked_at : ::Time::Span? = nil
+  @@last_collected_at : ::Time::Span? = nil
+  @@last_collected_duration : ::Time::Span? = nil
   @@background_collect_running : Atomic::Flag = Atomic::Flag.new
   @@background_collect_poll_interval_ns : Atomic(UInt64) = Atomic(UInt64).new(DEFAULT_BACKGROUND_COLLECT_POLL_INTERVAL.total_nanoseconds.to_u64)
 
@@ -47,7 +48,7 @@ class IdleGC
   # Relative to Time.monotonic, when did IdleGC last check whether or not to run garbage collect?
   #
   # Returns nil if we've never checked.
-  def self.last_checked_at : Time::Span?
+  def self.last_checked_at : ::Time::Span?
     mu.synchronize do
       return @@last_checked_at
     end
@@ -56,7 +57,7 @@ class IdleGC
   # Relative to Time.monotonic, when did IdleGC last initiate GC.collect?
   #
   # Returns nil if we've never collected.
-  def self.last_collected_at : Time::Span?
+  def self.last_collected_at : ::Time::Span?
     mu.synchronize do
       return @@last_collected_at
     end
@@ -65,7 +66,7 @@ class IdleGC
   # How long did GC.collect take to run?
   #
   # Returns nil if we've never collected.
-  def self.last_collected_duration : Time::Span?
+  def self.last_collected_duration : ::Time::Span?
     mu.synchronize do
       return @@last_collected_duration
     end
@@ -74,9 +75,9 @@ class IdleGC
   # Explicitly force collection now.
   def self.collect : Nil
     mu.synchronize do
-      start_time = Time.monotonic
+      start_time = IdleGC::Time.monotonic
       GC.collect
-      end_time = Time.monotonic
+      end_time = IdleGC::Time.monotonic
 
       @@last_checked_at = start_time
       @@last_collected_at = start_time
@@ -95,7 +96,7 @@ class IdleGC
   end
 
   # How often should the background_collect Fiber check for idle?
-  def self.background_collect_poll_interval=(v : Time::Span) : Nil
+  def self.background_collect_poll_interval=(v : ::Time::Span) : Nil
     @@background_collect_poll_interval_ns.set(v.total_nanoseconds.to_u64)
   end
 
@@ -118,12 +119,12 @@ class IdleGC
     @@mu
   end
 
-  protected def self.last_checked_at=(v : Time::Span?)
+  protected def self.last_checked_at=(v : ::Time::Span?)
     @@last_checked_at = v
   end
 
   protected def self.spawn_background_collect_fiber : Nil
-    requested_at = Time.monotonic
+    requested_at = IdleGC::Time.monotonic
 
     spawn do
       do_collect = true

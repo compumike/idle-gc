@@ -188,6 +188,7 @@ class IdleGCBench
       parser.on("--request-limit=N", "Set IdleGC::Request.request_limit and fire a request after every request") { |v| @request_limit = v.to_u64 }
       parser.on("--start", "Start IdleGC::Timer") { @start = true }
       parser.on("--poll=N", "IdleGC::Timer.poll_interval=") { |v| IdleGC::Timer.poll_interval = v.to_f64.seconds }
+      parser.on("--force=N", "IdleGC::Timer.force_gc_period=") { |v| IdleGC::Timer.force_gc_period = v.to_f64.seconds }
     end
 
     IdleGC.start if @start

@@ -35,5 +35,15 @@ class IdleGC
       seconds, nanoseconds = monotonic_timespec
       ::Time::Span.new(seconds: seconds, nanoseconds: nanoseconds)
     end
+    {% if flag?(:darwin) %}
+        @@mach_timebase_info : LibC::MachTimebaseInfo?
+    private def self.mach_timebase_info
+      @@mach_timebase_info ||= begin
+        LibC.mach_timebase_info(out info)
+        info
+      end
+    end
+    {% end %}  
+
   end
 end

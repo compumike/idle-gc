@@ -11,8 +11,8 @@ If you have request-oriented processing, such as in a web server, you may additi
 
 **IdleGC** is currently used in production on:
 
--  [Heii On-Call](https://heiioncall.com/)
--  [Total Real Returns](https://totalrealreturns.com/)
+-  [HeyOnCall](https://heyoncall.com/) - [website monitoring](https://heyoncall.com/website-monitoring) and on-call alerting
+-  [Total Real Returns](https://totalrealreturns.com/) - inflation and dividend-adjusted stock charts
 
 ## Benchmarks
 

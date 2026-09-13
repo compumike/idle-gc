@@ -80,7 +80,7 @@ class IdleGCBench
       @result = nil # remove pointer
 
       IdleGC.collect if @bench.sync_every
-      IdleGC.collect if @bench.bg_every
+      IdleGC.background_collect if @bench.bg_every
       IdleGC::Request.request if @bench.request_limit > 0
     end
 
@@ -99,11 +99,13 @@ class IdleGCBench
     def process
       wait_for_requested_at
 
-      @processing_started_at = Time.monotonic
-      @result = do_request
-      @processing_ended_at = Time.monotonic
+      IdleGC.busy do
+        @processing_started_at = Time.monotonic
+        @result = do_request
+        @processing_ended_at = Time.monotonic
 
-      after_request
+        after_request
+      end
     end
 
     def initialize(@bench, requested_at : Time::Span? = nil)
@@ -134,7 +136,6 @@ class IdleGCBench
       r = Request.new(self, start_at)
       @requests << r
       r.process
-      Fiber.yield
       @latencies << r.latency.not_nil!
       completion_channel.send(nil)
     end
@@ -176,7 +177,7 @@ class IdleGCBench
     puts "Heap size:      #{heap_size_mib.format(decimal_places: 2)} MiB"
     puts "Used size:      #{used_mib.format(decimal_places: 2)} MiB"
     puts "Max latency:    #{@latencies.last} s"
-    puts "GC stats (pre): #{gc_stats}"
+    puts "GC stats (pre): #{gc_stats_before_compact}"
     puts "GC stats:       #{gc_stats}"
   end
 

@@ -1,34 +1,13 @@
 # idle-gc
 
-**IdleGC** makes it easy to automatically run garbage collection when your [Crystal](https://crystal-lang.org/) process is otherwise idle. Idle-time garbage collection is beneficial because:
+**IdleGC v2** runs garbage collection during quiet periods between application requests or jobs. Call `IdleGC.start`, then wrap work in `IdleGC.busy { ... }`. When the last block finishes, a background fiber waits for the quiet period before attempting collection. A polled `force_gc_period` (default 2 minutes, matching the Golang runtime) runs regardless of busy/idle status.
 
-1. It reduces the memory size of the program, reducing operating costs, and
-2. It may prevent the garbage collector from running during a latency-sensitive period.
-
-**IdleGC** is easy-to-use. Simply call `IdleGC.start` and a new background Fiber will continuously poll for idle periods, garbage collecting as needed.
-
-If you have request-oriented processing, such as in a web server, you may additionally call `IdleGC.background_collect` near the end of your request cycle. This won't block your response from completing, but will only collect after the system is idle. It's perfectly safe to call `IdleGC.background_collect` multiple times, and it will only schedule a single collection if it hasn't had a chance to run yet.
+Only work inside `IdleGC.busy { ... }` is tracked as busy (not-idle). New work can arrive just after a check. GC still pauses the whole process.
 
 **IdleGC** is currently used in production on:
 
 -  [HeyOnCall](https://heyoncall.com/) - [website monitoring](https://heyoncall.com/website-monitoring) and on-call alerting
 -  [Total Real Returns](https://totalrealreturns.com/) - inflation and dividend-adjusted stock charts
-
-## Benchmarks
-
-It's hard to get reliable memory usage benchmarks. Test it in your own application.
-
-| Configuration | Heap Size (MiB) | Runtime (s) | Max Latency (ms) | Memory Savings (%) | Recommended? |
-| --- | --- | --- | --- | --- | --- |
-| (off) | 588.79 | 9.90 | 153 | (baseline) | _ |
-| Timer | 532.82 | 9.90 | 154 | -9.5% | _ |
-| Synchronous | 369.60 | 9.90 | 151 | -37.2% | _ |
-| Background | 369.80 | 9.90 | 151 | -37.2% | _ |
-| Timer + Synchronous | 362.15 | 9.90 | 151 | -38.5% | _ |
-| Timer + Background | 361.73 | 9.90 | 151 | -38.6% | **RECOMMENDED** |
-| Timer + request_limit=2 | 579.28 | 9.90 | 167 | -1.6% | _ |
-
-(Timer means a periodic idle GC. Synchronous means a blocking `IdleGC.collect` call within the request processing. Background means calling `IdleGC.background_collect` within the request processing. Benchmarks are run via `make bench` within `d_dev`. Results shown are best-of-5.)
 
 ## CRYSTAL_LOAD_DEBUG_INFO=0
 
@@ -56,22 +35,29 @@ This `CRYSTAL_LOAD_DEBUG_INFO=0` setting is currently undocumented. You can find
 
 ## Usage
 
-Timer-based polling:
+Configure defaults before starting:
 
 ```crystal
 require "idle-gc"
 
+IdleGC.quiet_period = 10.milliseconds
+IdleGC.min_bytes_since_gc = 1_048_576u64 # 1 MiB
 IdleGC.start
-```
 
-Background collection after a request:
-```crystal
-def your_request_handler(context : HTTP::Server::Context)
-   ... your code here...
-
-   IdleGC.background_collect
+IdleGC.busy do
+  # Handle one request or job here.
 end
 ```
+
+An `IdleGC.busy { ... }` block marks the process as being non-idle until the block finishes.
+
+Without a block, `IdleGC.busy` is a heartbeat that postpones collection for the specified period. Shorter heartbeats never shorten an existing quiet period deadline.
+
+`IdleGC.collect` always collects synchronously. `IdleGC.collect_if_needed` checks allocations versus `min_bytes_since_gc`. `IdleGC.collect_if_needed_and_idle` also checks activity. Both conditional methods return whether they collected.
+
+By default, the timer attempts collection even while busy after two minutes (matching the Golang runtime), but still checks `min_bytes_since_gc`. Set `IdleGC::Timer.force_gc_period = nil` before starting to disable this forced periodic GC.
+
+(IdleGC v1 was very different, based on automatic idle detection which no longer applies in newer versions of Crystal.)
 
 ## Development
 

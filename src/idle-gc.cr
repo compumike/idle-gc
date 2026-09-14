@@ -1,51 +1,105 @@
-require "./idle-gc/idle_detection"
 require "./idle-gc/request"
 require "./idle-gc/time"
 require "./idle-gc/timer"
 
-# IdleGC runs garbage collection periodically in order to keep memory usage low. It attempts to do so when the process is otherwise idle.
+# IdleGC runs garbage collection during quiet periods between application work.
+# Call IdleGC.start, then wrap requests or jobs in IdleGC.busy { ... }.
 #
-# To start, just call:
-#
-# ```
-# IdleGC.start
-# ```
-#
-# That is all that most use cases will need! Tweaks and tuning information are below.
-#
-# You may manually force a collection now (synchronously) with `IdleGC.collect`. Or, if you would like to manually run collection synchronously but only if idle, call `IdleGC.collect_if_idle`. To request a collection at the next idle opportunity, use `IdleGC.background_collect`.
-#
-# In addition to timer-based periodic operation which is started by `IdleGC.start`, you may wish to use request-based operation. For example, this could do background GC after every 100 web requests, or after every 10 MB served. To use this mode, first set `IdleGC::Request.request_limit = 100*1024*1024` (for example), and then call `IdleGC::Request.request(num_bytes)` to increment. This `IdleGC::Request` module will wait until the count overflows your limit, and will then fire off an `IdleGC.background_collect`.
-#
-# In the extremely unlikely case that your code does not yield or do any I/O, you may need to add explicit calls to `Fiber.yield` to allow IdleGC's background Fiber to have a chance to work.
-#
-# By default, IdleGC::Timer polls every 1 second, and if more than 0 bytes have been allocated on the heap, it runs garbage collection. To make IdleGC::Timer less aggressive (and use less CPU time, at the cost of higher memory usage), you may raise both of these settings, for example: `IdleGC::Timer.poll_interval = 5.seconds` and `IdleGC::Timer.bytes_since_gc_threshold = 128*1024`.
-#
-# Idle detection is based on a measurement of how long it takes `Fiber.yield` to return, and can be tuned with `IdleGC::IdleDetection.idle_threshold=`. If interactive performance (latency) is not a concern for your application, it is recommended that you disable idle detection with `IdleGC::IdleDetection.enabled = false`.
-#
-# Since idle detection may be inaccurate, there is a `IdleGC::Timer.force_gc_period=` which is set to force a collection every 2 minutes by default. You may disable this with `IdleGC::Timer.force_gc_period = nil`.
+# IdleGC.collect always collects. IdleGC.collect_if_needed checks allocations,
+# and IdleGC.collect_if_needed_and_idle also checks for activity.
+# Use IdleGC.background_collect to request a background attempt.
 class IdleGC
-  VERSION = "1.0.2"
+  VERSION = "2.0.0"
 
-  DEFAULT_BACKGROUND_COLLECT_POLL_INTERVAL = 10.milliseconds
+  DEFAULT_QUIET_PERIOD       = 10.milliseconds
+  DEFAULT_MIN_BYTES_SINCE_GC = 1_048_576u64
 
-  @@mu : Mutex = Mutex.new(Mutex::Protection::Reentrant)
+  @@mu = Mutex.new(Mutex::Protection::Reentrant)
   @@last_checked_at : ::Time::Span? = nil
   @@last_collected_at : ::Time::Span? = nil
   @@last_collected_duration : ::Time::Span? = nil
-  @@background_collect_running : Atomic::Flag = Atomic::Flag.new
-  @@background_collect_poll_interval_ns : Atomic(UInt64) = Atomic(UInt64).new(DEFAULT_BACKGROUND_COLLECT_POLL_INTERVAL.total_nanoseconds.to_u64)
+  @@background_collect_running = Atomic(Bool).new(false)
+  @@active_count = Atomic(Int64).new(0)
+  @@quiet_until_ns = Atomic(Int64).new(0)
+  @@quiet_period_ns = Atomic(Int64).new(DEFAULT_QUIET_PERIOD.total_nanoseconds.to_i64)
+  @@min_bytes_since_gc = Atomic(UInt64).new(DEFAULT_MIN_BYTES_SINCE_GC)
 
-  # ## PUBLIC METHODS
+  ##########
+  # START:
 
-  # Start a background Fiber that runs garbage collection periodically.
-  #
-  # (Also runs garbage collection immediately.)
+  # Start periodic collection. Calling start again does nothing.
   def self.start : Nil
-    IdleGC::Timer.start
+    Timer.start
   end
 
-  # Relative to Time.monotonic, when did IdleGC last check whether or not to run garbage collect?
+  ##########
+  # CONFIGURATION:
+
+  # How long should we wait after work finishes? Defaults to 10 milliseconds.
+  def self.quiet_period : ::Time::Span
+    @@quiet_period_ns.get.nanoseconds
+  end
+
+  def self.quiet_period=(v : ::Time::Span) : Nil
+    @@quiet_period_ns.set(quiet_period_ns_from_now(v))
+  end
+
+  # Minimum allocations for conditional collection. Defaults to 1 MiB.
+  # Setting this to zero still requires at least one allocated byte.
+  def self.min_bytes_since_gc : UInt64
+    @@min_bytes_since_gc.get
+  end
+
+  def self.min_bytes_since_gc=(v : UInt64) : Nil
+    @@min_bytes_since_gc.set(v)
+  end
+
+  ##########
+  # BUSY (NOT-IDLE) TRACKING:
+
+  # Mark activity without a block. Call again if the work outlasts the period.
+  def self.busy(quiet_period : ::Time::Span = self.quiet_period) : Nil
+    extend_quiet_until(quiet_period_ns_from_now(quiet_period))
+
+    # Schedule a background collection if there are no block-tracked work running.
+    background_collect if Timer.running? && @@active_count.get == 0
+  end
+
+  # Postpone idle collection until the block and its quiet period finish.
+  # This is the recommended interface for wrapping application work.
+  def self.busy(quiet_period : ::Time::Span = self.quiet_period, &)
+    period_ns = quiet_period_ns_from_now(quiet_period)
+
+    # Increment the active / busy count.
+    @@active_count.add(1)
+
+    begin
+      extend_quiet_until(period_ns)
+
+      # Run the block.
+      yield
+    ensure
+      begin
+        # Publish the deadline before another fiber can see the count reach zero.
+        extend_quiet_until(period_ns)
+      ensure
+        remaining = @@active_count.sub(1) - 1
+
+        # Just to be safe, make sure active_count never goes negative.
+        if remaining < 0
+          @@active_count.compare_and_set(remaining, 0)
+        end
+      end
+
+      # If finishing this block means the process is now idle, schedule a background collection.
+      background_collect if remaining == 0 && Timer.running?
+    end
+  end
+
+  ##########
+  # METADATA:
+
+  # Relative to IdleGC::Time.monotonic, when did IdleGC last check whether or not to run garbage collect?
   #
   # Returns nil if we've never checked.
   def self.last_checked_at : ::Time::Span?
@@ -54,7 +108,7 @@ class IdleGC
     end
   end
 
-  # Relative to Time.monotonic, when did IdleGC last initiate GC.collect?
+  # Relative to IdleGC::Time.monotonic, when did IdleGC last initiate GC.collect?
   #
   # Returns nil if we've never collected.
   def self.last_collected_at : ::Time::Span?
@@ -72,6 +126,9 @@ class IdleGC
     end
   end
 
+  ##########
+  # GARBAGE COLLECTION:
+
   # Explicitly force collection now.
   def self.collect : Nil
     mu.synchronize do
@@ -85,69 +142,96 @@ class IdleGC
     end
   end
 
-  # Collect now, but only if process is idle.
-  def self.collect_if_idle : Bool
-    if IdleGC::IdleDetection.process_is_idle?
+  # Collect if enough memory has been allocated, even if we're busy.
+  def self.collect_if_needed : Bool
+    mu.synchronize do
+      @@last_checked_at = IdleGC::Time.monotonic
+      return false unless collection_needed?
       collect
       true
-    else
-      false
     end
   end
 
-  # How often should the background_collect Fiber check for idle?
-  def self.background_collect_poll_interval=(v : ::Time::Span) : Nil
-    @@background_collect_poll_interval_ns.set(v.total_nanoseconds.to_u64)
+  # Collect if enough memory has been allocated and no tracked work is busy.
+  def self.collect_if_needed_and_idle : Bool
+    mu.synchronize do
+      @@last_checked_at = IdleGC::Time.monotonic
+      return false unless collection_needed?
+      return false unless idle?
+      collect
+      true
+    end
   end
 
-  # Kick off a Fiber to do collection at the next idle opportunity.
-  #
-  # Returns true if a background collection was scheduled.
-  # Returns false if there was already one scheduled.
+  ##########
+  # BACKGROUND COLLECTION FIBER:
+
+  # Calling background_collect requests one background attempt by spinning up a new fiber.
+  # Returns false if one is already pending.
+  # A request near the end of an attempt may be missed; the periodic poll retries.
   def self.background_collect : Bool
-    should_spawn = @@background_collect_running.test_and_set
-    return false unless should_spawn
+    # Atomic flag ensures at most one of these background collection fibers runs at a time.
+    return false if @@background_collect_running.swap(true)
 
-    spawn_background_collect_fiber
+    begin
+      spawn do
+        begin
+          loop do
+            # If active_count>0, there's no need for us to wait.
+            # (The block will spawn a new background_collect fiber when it finishes and active_count drops to zero.)
+            break unless @@active_count.get == 0
 
+            remaining = @@quiet_until_ns.get - IdleGC::Time.monotonic.total_nanoseconds
+            if remaining > 0
+              # Sleep for a bit longer than the remaining quiet period, to avoid spinning too fast.
+              sleep((remaining + 1000).nanoseconds)
+            else
+              collect_if_needed_and_idle
+              break
+            end
+          end
+        ensure
+          @@background_collect_running.set(false)
+        end
+      end
+    rescue ex
+      @@background_collect_running.set(false)
+      raise ex
+    end
     true
   end
 
-  # ## INTERNAL METHODS
+  ##########
+  # INTERNAL METHODS:
 
   protected def self.mu : Mutex
     @@mu
   end
 
-  protected def self.last_checked_at=(v : ::Time::Span?)
-    @@last_checked_at = v
+  private def self.idle?(now_ns = IdleGC::Time.monotonic.total_nanoseconds) : Bool
+    @@active_count.get == 0 && now_ns >= @@quiet_until_ns.get
   end
 
-  protected def self.spawn_background_collect_fiber : Nil
-    requested_at = IdleGC::Time.monotonic
+  private def self.collection_needed?(bytes = GC.stats.bytes_since_gc) : Bool
+    bytes > 0 && bytes >= min_bytes_since_gc
+  end
 
-    spawn do
-      do_collect = true
+  private def self.quiet_period_ns_from_now(period : ::Time::Span) : Int64
+    raise ArgumentError.new("quiet_period must be nonnegative") if period < ::Time::Span.zero
+    ns = period.total_nanoseconds.to_i64
+    # Check the deadline too, before entering a busy block.
+    (IdleGC::Time.monotonic.total_nanoseconds + ns).to_i64
+    ns
+  end
 
-      poll_sleep_ns = @@background_collect_poll_interval_ns.get
-      poll_sleep = poll_sleep_ns.nanoseconds
-
-      loop do
-        # Skip if there's been a collection in the meantime
-        collected_at = mu.synchronize { @@last_collected_at }
-        if collected_at && (collected_at > requested_at)
-          do_collect = false
-          break
-        end
-
-        break if IdleGC::IdleDetection.process_is_idle?
-
-        sleep(poll_sleep)
-      end
-
-      collect if do_collect
-
-      @@background_collect_running.clear
+  private def self.extend_quiet_until(period_ns : Int64) : Nil
+    deadline = (IdleGC::Time.monotonic.total_nanoseconds + period_ns).to_i64
+    previous = @@quiet_until_ns.get
+    while previous < deadline
+      # A shorter heartbeat must not overwrite a longer quiet period.
+      # Looped atomic update, which terminates if (1) we successfully set the new quiet_until_ns deadline, or (2) the quiet_until_ns deadline is already longer.
+      previous, changed = @@quiet_until_ns.compare_and_set(previous, deadline)
+      break if changed
     end
   end
 end

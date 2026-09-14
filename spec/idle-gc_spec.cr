@@ -1,122 +1,156 @@
 require "./spec_helper"
 
+class IdleGC
+  def self.idle_for_spec(now_ns)
+    idle?(now_ns)
+  end
+
+  def self.needed_for_spec(bytes : UInt64)
+    collection_needed?(bytes)
+  end
+
+  def self.activity_count_for_spec
+    @@active_count.get
+  end
+
+  def self.deadline_for_spec
+    @@quiet_until_ns.get
+  end
+end
+
 describe IdleGC do
-  it "IdleGC.collect_if_idle works" do
-    IdleGC::Timer.stop
-    IdleGC.collect
-
-    # Keep pointers around so they aren't freed.
-    my_strings = Array(String).new(16)
-
-    # Idle collection should work
-    my_strings << alloc_string(500000)
-    GC.stats.bytes_since_gc.should be >= 500000
-    IdleGC.collect_if_idle.should be_true
-    GC.stats.bytes_since_gc.should be < 16384
-
-    # Start a background worker.
-    worker_stop_channel = spawn_background_worker(1.millisecond)
-    sleep(10.milliseconds)
-    after_worker = IdleGC.last_collected_at.not_nil!
-
-    # Idle collection shouldn't happen
-    my_strings << alloc_string(256000)
-    GC.stats.bytes_since_gc.should be > 16384
-    IdleGC.collect_if_idle.should be_false
-    IdleGC.last_collected_at.not_nil!.should eq(after_worker)
-
-    # Stop the background worker
-    worker_stop_channel.close
+  before_each do
+    IdleGC.min_bytes_since_gc = IdleGC::DEFAULT_MIN_BYTES_SINCE_GC
+    IdleGC.quiet_period = IdleGC::DEFAULT_QUIET_PERIOD
     sleep(15.milliseconds)
-    IdleGC.collect_if_idle.should be_true
-    IdleGC.last_collected_at.not_nil!.should be > after_worker
-    GC.stats.bytes_since_gc.should be < 16384
   end
 
-  it "IdleGC.background_collect works (when idle)" do
-    IdleGC::Timer.stop
+  it "becomes idle exactly at the deadline, unless a block is active" do
+    IdleGC.busy
+    deadline = IdleGC.deadline_for_spec
+    IdleGC.idle_for_spec(deadline - 1).should be_false
+    IdleGC.idle_for_spec(deadline).should be_true
+    IdleGC.busy(0.seconds) do
+      IdleGC.idle_for_spec(deadline).should be_false
+    end
+  end
+
+  it "includes the allocation threshold but always skips zero bytes" do
+    threshold = IdleGC::DEFAULT_MIN_BYTES_SINCE_GC
+    IdleGC.needed_for_spec(0u64).should be_false
+    IdleGC.needed_for_spec(threshold - 1).should be_false
+    IdleGC.needed_for_spec(threshold).should be_true
+    IdleGC.needed_for_spec(threshold + 1).should be_true
+    IdleGC.min_bytes_since_gc = 0
+    IdleGC.needed_for_spec(0u64).should be_false
+    IdleGC.needed_for_spec(1u64).should be_true
+  end
+
+  it "keeps nested blocks busy and returns the block result" do
+    IdleGC.busy(0.seconds) do
+      IdleGC.activity_count_for_spec.should eq(1)
+      IdleGC.busy(0.seconds) { IdleGC.activity_count_for_spec.should eq(2) }
+      IdleGC.activity_count_for_spec.should eq(1)
+      42
+    end.should eq(42)
+    IdleGC.activity_count_for_spec.should eq(0)
+  end
+
+  it "leaves the quiet period in place when a block raises" do
+    expect_raises(Exception, "work failed") do
+      IdleGC.busy { raise "work failed" }
+    end
+    IdleGC.activity_count_for_spec.should eq(0)
+    IdleGC.deadline_for_spec.should be > IdleGC::Time.monotonic.total_nanoseconds
+  end
+
+  it "does not shorten a heartbeat and does not hold activity" do
+    IdleGC.busy(10.milliseconds)
+    deadline = IdleGC.deadline_for_spec
+    IdleGC.busy(0.seconds)
+    IdleGC.busy(0.seconds) { nil }
+    IdleGC.deadline_for_spec.should eq(deadline)
+    IdleGC.activity_count_for_spec.should eq(0)
+  end
+
+  it "uses the period captured at block entry" do
+    IdleGC.quiet_period = 10.milliseconds
+    IdleGC.busy do
+      IdleGC.quiet_period = 0.seconds
+      sleep(15.milliseconds)
+    end
+    IdleGC.deadline_for_spec.should be > IdleGC::Time.monotonic.total_nanoseconds
+  end
+
+  it "rejects invalid periods without entering the block" do
+    expect_raises(ArgumentError) { IdleGC.busy(-1.nanosecond) }
+    expect_raises(ArgumentError) { IdleGC.busy(-1.nanosecond) { fail "entered block" } }
+    expect_raises(OverflowError) { IdleGC.busy(Time::Span::MAX) { fail "entered block" } }
+    IdleGC.activity_count_for_spec.should eq(0)
+  end
+
+  it "tracks overlapping fibers until the last one exits" do
+    entered = Channel(Nil).new
+    leave = Channel(Nil).new
+    done = Channel(Nil).new
+    2.times do
+      spawn do
+        IdleGC.busy(0.seconds) do
+          entered.send(nil)
+          leave.receive
+        end
+        done.send(nil)
+      end
+    end
+    2.times { entered.receive }
+    IdleGC.activity_count_for_spec.should eq(2)
+    leave.send(nil)
+    done.receive
+    IdleGC.activity_count_for_spec.should eq(1)
+    leave.send(nil)
+    done.receive
+    IdleGC.activity_count_for_spec.should eq(0)
+  end
+
+  it "keeps unconditional, allocation-only, and idle collection distinct" do
+    IdleGC.min_bytes_since_gc = UInt64::MAX
+    IdleGC.busy(0.seconds) do
+      IdleGC.collect
+      collected = IdleGC.last_collected_at
+      IdleGC.collect_if_needed.should be_false
+      IdleGC.collect_if_needed_and_idle.should be_false
+      IdleGC.last_collected_at.should eq(collected)
+      IdleGC.min_bytes_since_gc = 0
+      data = alloc_string(100_000)
+      IdleGC.collect_if_needed_and_idle.should be_false
+      IdleGC.collect_if_needed.should be_true
+      data.size.should eq(100_000)
+    end
+    data = alloc_string(100_000)
+    IdleGC.collect_if_needed_and_idle.should be_true
+    data.size.should eq(100_000)
+  end
+
+  it "coalesces background attempts and respects an extended deadline" do
+    IdleGC.min_bytes_since_gc = 0
     IdleGC.collect
-
-    # Keep pointers around so they aren't freed.
-    my_strings = Array(String).new(16)
-
-    # Idle collection should work
-    my_strings << alloc_string(500000)
-    GC.stats.bytes_since_gc.should be >= 500000
-
-    # Request collection
-    before_collect = IdleGC.last_collected_at.not_nil!
+    before = IdleGC.last_collected_at
+    IdleGC.busy(10.milliseconds)
     IdleGC.background_collect.should be_true
-    GC.stats.bytes_since_gc.should be >= 500000
-
-    # Requesting a second collection should do nothing
     IdleGC.background_collect.should be_false
-
-    # Should collect in background
-    sleep(25.milliseconds)
-    IdleGC.last_collected_at.not_nil!.should be > before_collect
-    GC.stats.bytes_since_gc.should be < 16384
+    IdleGC.busy(30.milliseconds)
+    sleep(15.milliseconds)
+    IdleGC.last_collected_at.should eq(before)
+    sleep(30.milliseconds)
+    IdleGC.last_collected_at.should_not eq(before)
   end
 
-  it "IdleGC.background_collect waits (when busy)" do
-    IdleGC::Timer.stop
-    IdleGC.collect
-    IdleGC.background_collect_poll_interval = 1.millisecond
-
-    # Keep pointers around so they aren't freed.
-    my_strings = Array(String).new(16)
-
-    # Idle collection should work
-    my_strings << alloc_string(500000)
-    GC.stats.bytes_since_gc.should be >= 500000
-
-    # Start a background worker.
-    worker_stop_channel = spawn_background_worker(1.millisecond)
-    sleep(10.milliseconds)
-
-    # Request a collection.
-    before_collect = IdleGC.last_collected_at.not_nil!
-    IdleGC.background_collect.should be_true
-
-    # Should NOT collect while busy
-    sleep(55.milliseconds)
-    IdleGC.last_collected_at.not_nil!.should eq(before_collect)
-
-    # Second collection request should have no effect.
-    IdleGC.background_collect.should be_false
-
-    # Stop worker. Should collect.
-    worker_stop_channel.close
-    sleep(5.milliseconds)
-    IdleGC.last_collected_at.not_nil!.should be > before_collect
-
-    IdleGC.background_collect_poll_interval = IdleGC::DEFAULT_BACKGROUND_COLLECT_POLL_INTERVAL
-  end
-
-  it "IdleGC.background_collect is cancelled by a synchronous IdleGC.collect" do
-    IdleGC::Timer.stop
-    IdleGC.collect
-
-    # Start a background worker.
-    worker_stop_channel = spawn_background_worker(1.millisecond)
-    sleep(10.milliseconds)
-
-    # Request background collection
-    before_collect = IdleGC.last_collected_at.not_nil!
-    IdleGC.background_collect.should be_true
-
-    # Request synchronous collection
-    IdleGC.collect
-    after_collect = IdleGC.last_collected_at.not_nil!
-    after_collect.should be > before_collect
-
-    # Stop worker. Should collect.
-    worker_stop_channel.close
-    sleep(5.milliseconds)
-
-    # Background collection shouldn't happen
-    # Should collect in background
-    sleep(25.milliseconds)
-    IdleGC.last_collected_at.not_nil!.should eq(after_collect)
+  it "releases the background flag when an attempt finds active work" do
+    IdleGC.busy(0.seconds) do
+      IdleGC.background_collect.should be_true
+      sleep(1.millisecond)
+      IdleGC.background_collect.should be_true
+      sleep(1.millisecond)
+    end
   end
 end

@@ -30,9 +30,10 @@ class IdleGC
       @@synchronous.get == 1u8
     end
 
-    # Set synchronous=true to force garbage collection to happen synchronously when the request_limit is exceeded.
+    # Set synchronous=true to try collection synchronously when request_limit is reached.
+    # Collection still requires min_bytes_since_gc allocations.
     #
-    # If synchronous=false, a background collection will be scheduled, but will wait until the system is idle.
+    # If synchronous=false, a background collection will be scheduled, but will check for tracked activity before collecting.
     #
     # Use synchronous=false for interactive systems, and synchronous=true for non-interactive batch processes.
     def self.synchronous=(v : Bool) : Nil
@@ -49,9 +50,9 @@ class IdleGC
       new_count = old_count + incr
       return false if new_count < lim
 
-      # Do the GC
+      # Try the GC (both paths check min_bytes_since_gc)
       if sync
-        IdleGC.collect
+        IdleGC.collect_if_needed
       else
         IdleGC.background_collect
       end

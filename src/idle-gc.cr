@@ -9,7 +9,7 @@ require "./idle-gc/timer"
 # and IdleGC.collect_if_needed_and_idle also checks for activity.
 # Use IdleGC.background_collect to request a background attempt.
 class IdleGC
-  VERSION = "1.0.2"
+  VERSION = "2.0.0"
 
   DEFAULT_QUIET_PERIOD       = 10.milliseconds
   DEFAULT_MIN_BYTES_SINCE_GC = 1_048_576u64
